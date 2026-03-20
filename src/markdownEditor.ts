@@ -384,13 +384,20 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                         setTimeout(() => { 
                             isUpdating = false; 
                             renderMermaid();
+                            
+                            // Force scroll to top on load/update
+                            window.scrollTo(0, 0);
+                            document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor').forEach(el => {
+                                el.scrollTop = 0;
+                            });
                         }, 50);
                     }
                     break;
             }
         });
 
-        document.addEventListener('click', event => {
+        document.addEventListener('mousedown', event => {
+            if (event.button !== 0) return; // Only process left clicks
             let node = event.target;
             while (node && node.tagName !== 'A') {
                 node = node.parentNode;
