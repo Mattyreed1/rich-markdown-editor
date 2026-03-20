@@ -60,18 +60,42 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                     return;
                 case 'openLink':
                     try {
-                        const href = e.href;
+                        let href = e.href;
+                        try { href = decodeURIComponent(href); } catch (e) {}
+
                         if (href.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:/)) {
                             // Absolute URL with a scheme (e.g. http://, https://, mailto:, file://)
                             vscode.env.openExternal(vscode.Uri.parse(href));
-                        } else {
-                            // Relative URL (e.g. ./other.md, /abs/path.md)
-                            const dir = vscode.Uri.joinPath(document.uri, '..');
-                            const uri = vscode.Uri.joinPath(dir, href);
-                            vscode.commands.executeCommand('vscode.open', uri);
+                            return;
                         }
-                    } catch (err) {
+
+                        // Relative URL (e.g. ./other.md, /abs/path.md)
+                        const dir = vscode.Uri.joinPath(document.uri, '..');
+                        const uri = vscode.Uri.joinPath(dir, href);
+
+                        vscode.workspace.fs.stat(uri).then(
+                            () => {
+                                vscode.commands.executeCommand('vscode.open', uri);
+                            },
+                            () => {
+                                if (!href.toLowerCase().endsWith('.md')) {
+                                    const mdUri = vscode.Uri.joinPath(dir, href + '.md');
+                                    vscode.workspace.fs.stat(mdUri).then(
+                                        () => vscode.commands.executeCommand('vscode.open', mdUri),
+                                        () => {
+                                            vscode.window.showWarningMessage("Could not find file: " + href);
+                                            vscode.commands.executeCommand('vscode.open', uri);
+                                        }
+                                    );
+                                } else {
+                                    vscode.window.showWarningMessage("Could not find file: " + href);
+                                    vscode.commands.executeCommand('vscode.open', uri);
+                                }
+                            }
+                        );
+                    } catch (err: any) {
                         console.error("Failed to open link: ", err);
+                        vscode.window.showErrorMessage("Error interpreting link: " + err.message);
                     }
                     return;
                 case 'error':
