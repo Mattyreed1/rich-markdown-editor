@@ -289,6 +289,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             initialEditType: 'wysiwyg',
             previewStyle: 'vertical',
             theme: 'dark',
+            autofocus: false,
             hideModeSwitch: true,
             customHTMLRenderer: {
                 codeBlock(node, context) {
