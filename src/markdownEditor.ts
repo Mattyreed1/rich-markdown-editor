@@ -163,6 +163,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         }
         .collapse-icon {
             transition: transform 0.2s ease;
+            display: inline-block;
         }
         #frontmatter-container:not(.collapsed) .collapse-icon {
             transform: rotate(180deg);
@@ -380,6 +381,8 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                         document.body.focus(); // Defocus to prevent scroll-to-cursor
                         toastUiEditor.setMarkdown(splitResult.content, false);
                         
+                        try { if (toastUiEditor.moveCursorToStart) toastUiEditor.moveCursorToStart(); } catch(e){}
+                        
                         // Absolute 60fps Scroll Lock to overpower ProseMirror layout engine jumps
                         let lockFrames = 0;
                         function lockScrollTop() {
@@ -387,6 +390,8 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                             document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor, .toastui-editor-contents, .ProseMirror, .toastui-editor-md-preview').forEach(el => {
                                 el.scrollTop = 0;
                             });
+                            try { if (toastUiEditor.moveCursorToStart) toastUiEditor.moveCursorToStart(); } catch(e){}
+                            try { if (toastUiEditor.setSelection) toastUiEditor.setSelection(0, 0); } catch(e){}
                             if (lockFrames++ < 45) {
                                 requestAnimationFrame(lockScrollTop);
                             }
@@ -411,31 +416,20 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             if (target.nodeType === 3) target = target.parentNode;
             if (!target) return;
             
-            let a = null;
             let current = target;
             let href = null;
             
             // Traverse up to find a link
             while (current && current !== document.body) {
                 if (current.tagName === 'A' && current.hasAttribute('href')) {
-                    a = current;
-                    href = a.getAttribute('href');
+                    href = current.getAttribute('href');
                     break;
                 }
                 if (current.classList && current.classList.contains('toastui-editor-ww-link')) {
-                    a = current;
-                    href = current.getAttribute('data-url') || current.textContent;
+                    href = current.getAttribute('data-href') || current.getAttribute('data-url');
                     break;
                 }
                 current = current.parentNode;
-            }
-
-            // Universal fallback: if the element visually looks like a link, intercept it
-            if (!href) {
-                const style = window.getComputedStyle(target);
-                if (style.color === 'rgb(0, 0, 238)' || style.color === 'rgb(55, 148, 255)' || (target.className && typeof target.className === 'string' && target.className.includes('link'))) {
-                    href = target.textContent;
-                }
             }
 
             if (href && !href.startsWith('#')) {
