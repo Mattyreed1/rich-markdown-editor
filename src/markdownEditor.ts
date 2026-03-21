@@ -202,6 +202,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </style>
 </head>
 <body class="vscode-dark">
+    <div style="position:absolute; top:2px; right:30px; background:orange; color:black; padding:2px 6px; z-index:99999; font-weight:bold; font-size:10px; border-radius:3px; pointer-events:none;">v0.0.15 DIAGNOSTIC</div>
     <div id="container">
         <div id="frontmatter-container">
             <div id="frontmatter-header" onclick="document.getElementById('frontmatter-container').classList.toggle('collapsed')">
@@ -233,7 +234,13 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                     if (window.mermaid) {
                         // Render Viewer/Preview mode diagrams
                         mermaid.run({ querySelector: '.mermaid-diagram', suppressErrors: true })
-                            .catch(e => { console.error('Mermaid render error: ', e); });
+                            .catch(e => { console.error('Mermaid render error: ', e); })
+                            .finally(() => {
+                                setTimeout(() => {
+                                    window.scrollTo(0, 0);
+                                    document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor').forEach(el => el.scrollTop = 0);
+                                }, 10);
+                            });
 
                         // Render WYSIWYG mode inline previews
                         const wysiwygBlocks = document.querySelectorAll('.toastui-editor-ww-code-block[data-language="mermaid"]');
@@ -383,20 +390,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                             fmEditor.value = '';
                         }
                         
-                        toastUiEditor.setMarkdown(splitResult.content);
-                        
-                        // ProseMirror internally reflows and shifts focus across multiple ticks.
-                        // We must aggressively force the scroll top across ~500ms to guarantee it doesn't jump.
-                        let scrollAttempts = 0;
-                        const scrollInterval = setInterval(() => {
-                            window.scrollTo(0, 0);
-                            document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor').forEach(el => {
-                                el.scrollTop = 0;
-                            });
-                            try { if (toastUiEditor.moveCursorToStart) toastUiEditor.moveCursorToStart(); } catch(e){}
-                            try { if (toastUiEditor.setSelection) toastUiEditor.setSelection(0, 0); } catch(e){}
-                            if (scrollAttempts++ > 10) clearInterval(scrollInterval);
-                        }, 50);
+                        toastUiEditor.setMarkdown(splitResult.content, false);
                         
                         setTimeout(() => { 
                             isUpdating = false; 
