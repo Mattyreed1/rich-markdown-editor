@@ -61,6 +61,9 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                 case 'openLink':
                     try {
                         let href = e.href;
+                        // Log immediately so the user can verify if the backend even received the click!
+                        vscode.window.showInformationMessage("Opening Link: " + href);
+                        
                         try { href = decodeURIComponent(href); } catch (e) {}
 
                         if (href.startsWith('file://')) {
@@ -385,6 +388,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                             isUpdating = false; 
                             renderMermaid();
                             
+                            // Force selection to start. This overrides ProseMirror's default scroll-to-end bug
+                            if (toastUiEditor.moveCursorToStart) {
+                                toastUiEditor.moveCursorToStart();
+                            }
+                            
                             // Force scroll to top on load/update
                             window.scrollTo(0, 0);
                             document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor').forEach(el => {
@@ -399,14 +407,28 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         const handleLinkClick = (event) => {
             if (event.type === 'mousedown' && event.button !== 0) return; // Only process left clicks
             const target = event.target;
-            const a = target && target.closest ? target.closest('a') : null;
+            if (!target) return;
+            
+            const a = target.closest ? target.closest('a') : null;
+            let href = null;
+
+            // 1. Check for standard <a> tags
             if (a && a.hasAttribute('href')) {
-                const href = a.getAttribute('href');
-                if (href && !href.startsWith('#')) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    vscode.postMessage({ type: 'openLink', href: href });
-                }
+                href = a.getAttribute('href');
+            } 
+            // 2. Check for ToastUI's custom WYSIWYG linked spans
+            else if (target.classList && target.classList.contains('toastui-editor-ww-link')) {
+                href = target.getAttribute('data-url') || target.innerText;
+            } 
+            // 3. Check if parent contains the link span (if clicking on bold text inside a link, etc.)
+            else if (target.parentNode && target.parentNode.classList && target.parentNode.classList.contains('toastui-editor-ww-link')) {
+                href = target.parentNode.getAttribute('data-url') || target.innerText;
+            }
+
+            if (href && !href.startsWith('#')) {
+                event.preventDefault();
+                event.stopPropagation();
+                vscode.postMessage({ type: 'openLink', href: href });
             }
         };
         document.addEventListener('mousedown', handleLinkClick, true);
