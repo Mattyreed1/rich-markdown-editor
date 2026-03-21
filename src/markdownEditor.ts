@@ -196,7 +196,6 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </style>
 </head>
 <body class="vscode-dark">
-    <div style="position:absolute; top:2px; right:30px; background:orange; color:black; padding:2px 6px; z-index:99999; font-weight:bold; font-size:10px; border-radius:3px; pointer-events:none;">v0.1.0 DIAGNOSTIC</div>
     <div id="container">
         <div id="frontmatter-container">
             <div id="frontmatter-header" onclick="document.getElementById('frontmatter-container').classList.toggle('collapsed')">
