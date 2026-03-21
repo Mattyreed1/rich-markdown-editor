@@ -63,27 +63,27 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                         let href = e.href;
                         try { href = decodeURIComponent(href); } catch (e) {}
 
-                        if (href.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:/)) {
-                            // Absolute URL with a scheme (e.g. http://, https://, mailto:, file://)
+                        if (href.startsWith('file://')) {
+                            vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(href));
+                            return;
+                        } else if (href.match(/^[a-zA-Z][a-zA-Z0-9+.-]*:/)) {
                             vscode.env.openExternal(vscode.Uri.parse(href));
                             return;
                         }
 
-                        // Relative URL (e.g. ./other.md, /abs/path.md)
+                        // Relative URL
                         const dir = vscode.Uri.joinPath(document.uri, '..');
                         const uri = vscode.Uri.joinPath(dir, href);
 
                         vscode.workspace.fs.stat(uri).then(
-                            () => {
-                                vscode.commands.executeCommand('vscode.open', uri);
-                            },
+                            () => vscode.commands.executeCommand('vscode.open', uri),
                             () => {
                                 if (!href.toLowerCase().endsWith('.md')) {
                                     const mdUri = vscode.Uri.joinPath(dir, href + '.md');
                                     vscode.workspace.fs.stat(mdUri).then(
                                         () => vscode.commands.executeCommand('vscode.open', mdUri),
                                         () => {
-                                            vscode.window.showWarningMessage("Could not find file: " + href);
+                                            vscode.window.showInformationMessage("Opening dynamically: " + href);
                                             vscode.commands.executeCommand('vscode.open', uri);
                                         }
                                     );
@@ -169,7 +169,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             font-size: 12px;
         }
         #frontmatter-container.collapsed .collapse-icon {
-            transform: rotate(-90deg);
+            transform: rotate(180deg);
         }
         #frontmatter-container.collapsed #frontmatter-editor {
             display: none;
@@ -203,7 +203,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         <div id="frontmatter-container">
             <div id="frontmatter-header" onclick="document.getElementById('frontmatter-container').classList.toggle('collapsed')">
                 <span>YAML Metadata (Skill Trigger Data)</span>
-                <span class="collapse-icon">▼</span>
+                <span class="collapse-icon">▲</span>
             </div>
             <textarea id="frontmatter-editor" spellcheck="false"></textarea>
         </div>
@@ -396,24 +396,21 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             }
         });
 
-        document.addEventListener('mousedown', event => {
-            if (event.button !== 0) return; // Only process left clicks
-            let node = event.target;
-            while (node && node.tagName !== 'A') {
-                node = node.parentNode;
-            }
-            if (node && node.hasAttribute('href')) {
-                const href = node.getAttribute('href');
+        const handleLinkClick = (event) => {
+            if (event.type === 'mousedown' && event.button !== 0) return; // Only process left clicks
+            const target = event.target;
+            const a = target && target.closest ? target.closest('a') : null;
+            if (a && a.hasAttribute('href')) {
+                const href = a.getAttribute('href');
                 if (href && !href.startsWith('#')) {
                     event.preventDefault();
                     event.stopPropagation();
-                    vscode.postMessage({
-                        type: 'openLink',
-                        href: href
-                    });
+                    vscode.postMessage({ type: 'openLink', href: href });
                 }
             }
-        }, true);
+        };
+        document.addEventListener('mousedown', handleLinkClick, true);
+        document.addEventListener('click', handleLinkClick, true);
 
         // Tell the extension we are loaded and ready to receive documents
         vscode.postMessage({ type: 'ready' });
