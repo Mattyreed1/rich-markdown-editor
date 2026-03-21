@@ -152,26 +152,19 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             flex-direction: column;
         }
         #frontmatter-header {
-            padding: 4px 8px;
-            font-size: 11px;
-            font-weight: bold;
-            text-transform: uppercase;
-            background-color: var(--vscode-editorGroupHeader-tabsBackground);
-            color: var(--vscode-descriptionForeground);
+            padding: 8px 12px;
+            font-weight: 600;
+            cursor: pointer;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            cursor: pointer;
-            user-select: none;
-        }
-        #frontmatter-header:hover {
-            color: var(--vscode-editor-foreground);
+            background-color: var(--vscode-editorGroupHeader-tabsBackground);
+            border-bottom: 1px solid var(--vscode-editorGroup-border);
         }
         .collapse-icon {
             transition: transform 0.2s ease;
-            font-size: 12px;
         }
-        #frontmatter-container.collapsed .collapse-icon {
+        #frontmatter-container:not(.collapsed) .collapse-icon {
             transform: rotate(180deg);
         }
         #frontmatter-container.collapsed #frontmatter-editor {
@@ -207,7 +200,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         <div id="frontmatter-container">
             <div id="frontmatter-header" onclick="document.getElementById('frontmatter-container').classList.toggle('collapsed')">
                 <span>YAML Metadata (Skill Trigger Data)</span>
-                <span class="collapse-icon">▲</span>
+                <span class="collapse-icon">▼</span>
             </div>
             <textarea id="frontmatter-editor" spellcheck="false"></textarea>
         </div>
@@ -234,13 +227,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                     if (window.mermaid) {
                         // Render Viewer/Preview mode diagrams
                         mermaid.run({ querySelector: '.mermaid-diagram', suppressErrors: true })
-                            .catch(e => { console.error('Mermaid render error: ', e); })
-                            .finally(() => {
-                                setTimeout(() => {
-                                    window.scrollTo(0, 0);
-                                    document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor').forEach(el => el.scrollTop = 0);
-                                }, 10);
-                            });
+                            .catch(e => { console.error('Mermaid render error: ', e); });
 
                         // Render WYSIWYG mode inline previews
                         const wysiwygBlocks = document.querySelectorAll('.toastui-editor-ww-code-block[data-language="mermaid"]');
@@ -390,7 +377,21 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                             fmEditor.value = '';
                         }
                         
+                        document.body.focus(); // Defocus to prevent scroll-to-cursor
                         toastUiEditor.setMarkdown(splitResult.content, false);
+                        
+                        // Absolute 60fps Scroll Lock to overpower ProseMirror layout engine jumps
+                        let lockFrames = 0;
+                        function lockScrollTop() {
+                            window.scrollTo(0, 0);
+                            document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor, .toastui-editor-contents, .ProseMirror, .toastui-editor-md-preview').forEach(el => {
+                                el.scrollTop = 0;
+                            });
+                            if (lockFrames++ < 45) {
+                                requestAnimationFrame(lockScrollTop);
+                            }
+                        }
+                        requestAnimationFrame(lockScrollTop);
                         
                         setTimeout(() => { 
                             isUpdating = false; 
@@ -410,20 +411,31 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             if (target.nodeType === 3) target = target.parentNode;
             if (!target) return;
             
-            const a = target.closest ? target.closest('a') : null;
+            let a = null;
+            let current = target;
             let href = null;
+            
+            // Traverse up to find a link
+            while (current && current !== document.body) {
+                if (current.tagName === 'A' && current.hasAttribute('href')) {
+                    a = current;
+                    href = a.getAttribute('href');
+                    break;
+                }
+                if (current.classList && current.classList.contains('toastui-editor-ww-link')) {
+                    a = current;
+                    href = current.getAttribute('data-url') || current.textContent;
+                    break;
+                }
+                current = current.parentNode;
+            }
 
-            // 1. Check for standard <a> tags
-            if (a && a.hasAttribute('href')) {
-                href = a.getAttribute('href');
-            } 
-            // 2. Check for ToastUI's custom WYSIWYG linked spans
-            else if (target.classList && target.classList.contains('toastui-editor-ww-link')) {
-                href = target.getAttribute('data-url') || target.textContent;
-            } 
-            // 3. Check if parent contains the link span (if clicking on bold text inside a link, etc.)
-            else if (target.parentNode && target.parentNode.classList && target.parentNode.classList.contains('toastui-editor-ww-link')) {
-                href = target.parentNode.getAttribute('data-url') || target.parentNode.textContent;
+            // Universal fallback: if the element visually looks like a link, intercept it
+            if (!href) {
+                const style = window.getComputedStyle(target);
+                if (style.color === 'rgb(0, 0, 238)' || style.color === 'rgb(55, 148, 255)' || (target.className && typeof target.className === 'string' && target.className.includes('link'))) {
+                    href = target.textContent;
+                }
             }
 
             if (href && !href.startsWith('#')) {
