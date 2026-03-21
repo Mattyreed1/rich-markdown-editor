@@ -384,20 +384,23 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                         }
                         
                         toastUiEditor.setMarkdown(splitResult.content);
-                        setTimeout(() => { 
-                            isUpdating = false; 
-                            renderMermaid();
-                            
-                            // Force selection to start. This overrides ProseMirror's default scroll-to-end bug
-                            if (toastUiEditor.moveCursorToStart) {
-                                toastUiEditor.moveCursorToStart();
-                            }
-                            
-                            // Force scroll to top on load/update
+                        
+                        // ProseMirror internally reflows and shifts focus across multiple ticks.
+                        // We must aggressively force the scroll top across ~500ms to guarantee it doesn't jump.
+                        let scrollAttempts = 0;
+                        const scrollInterval = setInterval(() => {
                             window.scrollTo(0, 0);
                             document.querySelectorAll('.toastui-editor-ww-container .toastui-editor, .toastui-editor-md-container .toastui-editor').forEach(el => {
                                 el.scrollTop = 0;
                             });
+                            try { if (toastUiEditor.moveCursorToStart) toastUiEditor.moveCursorToStart(); } catch(e){}
+                            try { if (toastUiEditor.setSelection) toastUiEditor.setSelection(0, 0); } catch(e){}
+                            if (scrollAttempts++ > 10) clearInterval(scrollInterval);
+                        }, 50);
+                        
+                        setTimeout(() => { 
+                            isUpdating = false; 
+                            renderMermaid();
                         }, 50);
                     }
                     break;
@@ -406,7 +409,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
         const handleLinkClick = (event) => {
             if (event.type === 'mousedown' && event.button !== 0) return; // Only process left clicks
-            const target = event.target;
+            let target = event.target;
+            if (!target) return;
+            
+            // In contenteditable domains, event.target is often the TextNode itself!
+            if (target.nodeType === 3) target = target.parentNode;
             if (!target) return;
             
             const a = target.closest ? target.closest('a') : null;
@@ -418,11 +425,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             } 
             // 2. Check for ToastUI's custom WYSIWYG linked spans
             else if (target.classList && target.classList.contains('toastui-editor-ww-link')) {
-                href = target.getAttribute('data-url') || target.innerText;
+                href = target.getAttribute('data-url') || target.textContent;
             } 
             // 3. Check if parent contains the link span (if clicking on bold text inside a link, etc.)
             else if (target.parentNode && target.parentNode.classList && target.parentNode.classList.contains('toastui-editor-ww-link')) {
-                href = target.parentNode.getAttribute('data-url') || target.innerText;
+                href = target.parentNode.getAttribute('data-url') || target.parentNode.textContent;
             }
 
             if (href && !href.startsWith('#')) {
