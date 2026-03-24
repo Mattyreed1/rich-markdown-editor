@@ -1,9 +1,24 @@
 import * as vscode from 'vscode';
 
 export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
+    private static activeWebview: vscode.Webview | undefined;
+
     public static register(context: vscode.ExtensionContext): vscode.Disposable {
         const provider = new MarkdownEditorProvider(context);
-        return vscode.window.registerCustomEditorProvider(MarkdownEditorProvider.viewType, provider);
+        const editorRegistration = vscode.window.registerCustomEditorProvider(MarkdownEditorProvider.viewType, provider, {
+            webviewOptions: {
+                retainContextWhenHidden: true
+            }
+        });
+
+        const findCommand = vscode.commands.registerCommand('richMarkdown.find', () => {
+            if (MarkdownEditorProvider.activeWebview) {
+                MarkdownEditorProvider.activeWebview.postMessage({ type: 'openFind' });
+            }
+        });
+
+        context.subscriptions.push(editorRegistration, findCommand);
+        return editorRegistration;
     }
 
     private static readonly viewType = 'richMarkdown.wysiwygEditor';
@@ -42,8 +57,23 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             }
         });
 
+        // Track which webview is active so the find command can message it
+        if (webviewPanel.active) {
+            MarkdownEditorProvider.activeWebview = webviewPanel.webview;
+        }
+        webviewPanel.onDidChangeViewState(() => {
+            if (webviewPanel.active) {
+                MarkdownEditorProvider.activeWebview = webviewPanel.webview;
+            } else if (MarkdownEditorProvider.activeWebview === webviewPanel.webview) {
+                MarkdownEditorProvider.activeWebview = undefined;
+            }
+        });
+
         webviewPanel.onDidDispose(() => {
             changeDocumentSubscription.dispose();
+            if (MarkdownEditorProvider.activeWebview === webviewPanel.webview) {
+                MarkdownEditorProvider.activeWebview = undefined;
+            }
         });
 
         webviewPanel.webview.onDidReceiveMessage(e => {
@@ -134,22 +164,69 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         body, html {
             margin: 0;
             padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
+            overflow: auto;
             background-color: var(--vscode-editor-background);
             color: var(--vscode-editor-foreground);
         }
         #container {
             display: flex;
             flex-direction: column;
-            height: 100vh;
+            min-height: 100vh;
         }
         #frontmatter-container {
             flex: 0 0 auto;
             border-bottom: 2px solid var(--vscode-editorGroup-border);
             display: none;
             flex-direction: column;
+        }
+        #custom-find {
+            position: fixed;
+            top: 20px;
+            right: 40px;
+            background: var(--vscode-editorWidget-background, #252526);
+            border: 1px solid var(--vscode-editorWidget-border, #454545);
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border-radius: 4px;
+            padding: 6px;
+            z-index: 10000;
+            display: none;
+            align-items: center;
+            gap: 4px;
+        }
+        #custom-find input {
+            background: var(--vscode-input-background, #3c3c3c);
+            color: var(--vscode-input-foreground, #ccc);
+            border: 1px solid var(--vscode-input-border, transparent);
+            padding: 4px 6px;
+            border-radius: 2px;
+            outline: none;
+            width: 150px;
+            font-family: var(--vscode-font-family);
+        }
+        #custom-find input:focus {
+            border-color: var(--vscode-focusBorder, #007fd4);
+        }
+        #custom-find button {
+            background: transparent;
+            color: var(--vscode-icon-foreground, #c5c5c5);
+            border: 1px solid transparent;
+            border-radius: 3px;
+            cursor: pointer;
+            padding: 4px 8px;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        #custom-find button:hover {
+            background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+        }
+        #find-count {
+            color: var(--vscode-descriptionForeground, #999);
+            font-size: 12px;
+            font-family: var(--vscode-font-family);
+            padding: 0 4px;
+            white-space: nowrap;
         }
         #frontmatter-header {
             padding: 8px 12px;
@@ -196,6 +273,13 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
     </style>
 </head>
 <body class="vscode-dark">
+    <div id="custom-find">
+        <input id="find-input" type="text" placeholder="Find">
+        <span id="find-count"></span>
+        <button id="find-prev" title="Previous match">↑</button>
+        <button id="find-next" title="Next match">↓</button>
+        <button id="find-close" title="Close">×</button>
+    </div>
     <div id="container">
         <div id="frontmatter-container">
             <div id="frontmatter-header" onclick="document.getElementById('frontmatter-container').classList.toggle('collapsed')">
@@ -306,7 +390,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
 
         const toastUiEditor = new toastui.Editor({
             el: document.querySelector('#editor'),
-            height: '100%',
+            height: 'auto',
             initialEditType: 'wysiwyg',
             previewStyle: 'vertical',
             theme: 'dark',
@@ -360,6 +444,11 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         window.addEventListener('message', event => {
             const message = event.data;
             switch (message.type) {
+                case 'openFind':
+                    findWidget.style.display = 'flex';
+                    findInput.focus();
+                    findInput.select();
+                    break;
                 case 'update':
                     const text = message.text;
                     if (text !== lastKnownText) {
@@ -439,6 +528,61 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         };
         document.addEventListener('mousedown', handleLinkClick, true);
         document.addEventListener('click', handleLinkClick, true);
+
+        // Custom JS Find Widget Integration
+        const findWidget = document.getElementById('custom-find');
+        const findInput = document.getElementById('find-input');
+        const findCount = document.getElementById('find-count');
+        
+        const updateMatchCount = () => {
+            const query = findInput.value;
+            if (!query) { findCount.textContent = ''; return; }
+            const editorEl = document.querySelector('.toastui-editor-contents, .ProseMirror');
+            const text = editorEl ? editorEl.innerText : '';
+            let count = 0;
+            let pos = 0;
+            const lowerText = text.toLowerCase();
+            const lowerQuery = query.toLowerCase();
+            while ((pos = lowerText.indexOf(lowerQuery, pos)) !== -1) { count++; pos += lowerQuery.length; }
+            findCount.textContent = count === 0 ? 'No results' : count === 1 ? '1 match' : count + ' matches';
+        };
+        
+        findInput.addEventListener('input', updateMatchCount);
+        
+        const doFind = (backwards = false) => {
+            const query = findInput.value;
+            if (!query) return;
+            updateMatchCount();
+            // Native chromium JS DOM search engine completely bypasses the IPC bug
+            window.find(query, false, backwards, true, false, false, false);
+        };
+        
+        window.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+                e.preventDefault();
+                findWidget.style.display = 'flex';
+                findInput.focus();
+                findInput.select();
+            }
+            if (e.key === 'Escape' && findWidget.style.display !== 'none') {
+                findWidget.style.display = 'none';
+                toastUiEditor.focus();
+            }
+        });
+        
+        findInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                doFind(e.shiftKey);
+            }
+        });
+        
+        document.getElementById('find-next').addEventListener('click', () => doFind(false));
+        document.getElementById('find-prev').addEventListener('click', () => doFind(true));
+        document.getElementById('find-close').addEventListener('click', () => {
+            findWidget.style.display = 'none';
+            toastUiEditor.focus();
+        });
 
         // Tell the extension we are loaded and ready to receive documents
         vscode.postMessage({ type: 'ready' });
