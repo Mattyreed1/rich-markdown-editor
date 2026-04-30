@@ -270,6 +270,15 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         .toastui-editor-defaultUI {
             border: none;
         }
+        
+        /* Make links blue and underlined */
+        .toastui-editor-contents a,
+        .toastui-editor-ww-link,
+        a {
+            color: #3794ff !important;
+            text-decoration: underline !important;
+            cursor: pointer !important;
+        }
     </style>
 </head>
 <body class="vscode-dark">
@@ -291,7 +300,7 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
         <div id="editor"></div>
     </div>
     <script src="https://uicdn.toast.com/editor/latest/toastui-editor-all.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@9.4.3/dist/mermaid.min.js"></script>
     <script>
         mermaid.initialize({ startOnLoad: false, theme: 'dark' });
         const vscode = acquireVsCodeApi();
@@ -310,48 +319,153 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
                 try {
                     if (window.mermaid) {
                         // Render Viewer/Preview mode diagrams
-                        mermaid.run({ querySelector: '.mermaid-diagram', suppressErrors: true })
-                            .catch(e => { console.error('Mermaid render error: ', e); });
+                        try {
+                            const diagrams = document.querySelectorAll('.mermaid-diagram');
+                            const toProcess = [];
+                            diagrams.forEach((diag, index) => {
+                                const raw = diag.getAttribute('data-raw');
+                                if (raw) {
+                                    const decoded = decodeURIComponent(raw);
+                                    if (diag.dataset.renderedRaw !== decoded) {
+                                        if (!diag.id) diag.id = 'mermaid-preview-' + Math.random().toString(36).substr(2, 9);
+                                        diag.textContent = decoded;
+                                        diag.removeAttribute('data-processed');
+                                        toProcess.push(diag);
+                                        diag.dataset.renderedRaw = decoded;
+                                    }
+                                } else {
+                                    // Fallback for first render if data-raw wasn't caught
+                                    diag.removeAttribute('data-processed');
+                                    toProcess.push(diag);
+                                }
+                            });
+                            if (toProcess.length > 0) {
+                                mermaid.init(undefined, toProcess);
+                            }
+                        } catch (e) {
+                            console.error('Mermaid render error: ', e);
+                        }
 
-                        // Render WYSIWYG mode inline previews
-                        const wysiwygBlocks = document.querySelectorAll('.toastui-editor-ww-code-block[data-language="mermaid"]');
-                        wysiwygBlocks.forEach(block => {
-                            let preview = block.querySelector('.mermaid-wysiwyg-preview');
+                        // Render WYSIWYG mode inline previews using Overlays
+                        // since ProseMirror deletes non-schema DOM nodes appended inside it.
+                        let overlayContainer = document.getElementById('mermaid-overlays-container');
+                        if (!overlayContainer) {
+                            overlayContainer = document.createElement('div');
+                            overlayContainer.id = 'mermaid-overlays-container';
+                            overlayContainer.style.position = 'absolute';
+                            overlayContainer.style.top = '0';
+                            overlayContainer.style.left = '0';
+                            overlayContainer.style.pointerEvents = 'none'; // pass clicks through
+                            overlayContainer.style.width = '100%';
+                            document.body.appendChild(overlayContainer);
+                        }
+
+                        const codeBlocks = document.querySelectorAll('.toastui-editor-ww-code-block, pre');
+                        
+                        // Keep track of active blocks to remove orphaned overlays
+                        const activeBlockIds = new Set();
+
+                        codeBlocks.forEach((block, index) => {
+                            let isMermaid = false;
+                            const isWrapper = block.classList.contains('toastui-editor-ww-code-block');
+                            const pre = isWrapper ? block.querySelector('pre') : block;
+                            if (!pre) return;
+                            
+                            const actualBlock = isWrapper ? block : (pre.parentElement || pre);
+
+                            let langAttr = actualBlock.getAttribute('data-language') || pre.getAttribute('data-language');
+                            if (!langAttr) {
+                                const codeEl = pre.querySelector('code');
+                                if (codeEl && codeEl.className) {
+                                    const match = codeEl.className.match(/language-(\w+)/);
+                                    if (match) langAttr = match[1];
+                                }
+                            }
+                            if (langAttr === 'mermaid') isMermaid = true;
+
+                            const text = pre.innerText || pre.textContent || '';
+                            // Only set isMermaid if the code block has explicit language=mermaid
+                            // (Previously this falsely flagged JS variables starting with 'mermaid')
+
+                            if (!isMermaid) return;
+
+                            // Assign unique ID to the block if it doesn't have one
+                            if (!actualBlock.dataset.mermaidId) {
+                                actualBlock.dataset.mermaidId = 'mermaid-block-' + Math.random().toString(36).substr(2, 9);
+                            }
+                            const blockId = actualBlock.dataset.mermaidId;
+                            activeBlockIds.add(blockId);
+
+                            let preview = document.getElementById('overlay-' + blockId);
                             if (!preview) {
                                 preview = document.createElement('div');
+                                preview.id = 'overlay-' + blockId;
                                 preview.className = 'mermaid-wysiwyg-preview';
-                                preview.contentEditable = 'false';
-                                // Style it nicely
-                                preview.style.marginTop = '10px';
+                                preview.style.position = 'absolute';
                                 preview.style.padding = '10px';
                                 preview.style.backgroundColor = 'var(--vscode-editor-background)';
                                 preview.style.border = '1px solid var(--vscode-editorGroup-border)';
                                 preview.style.borderRadius = '4px';
-                                preview.style.userSelect = 'none';
-                                block.appendChild(preview);
+                                preview.style.pointerEvents = 'auto'; 
+                                overlayContainer.appendChild(preview);
                             }
+
+                            // Position overlay cleanly underneath the code block
+                            const rect = actualBlock.getBoundingClientRect();
+                            const containerRect = document.body.getBoundingClientRect();
+                            const top = rect.bottom - containerRect.top + 10;
+                            const left = rect.left - containerRect.left;
                             
-                            const codeEl = block.querySelector('pre');
-                            if (codeEl) {
-                                const text = codeEl.innerText;
-                                // Only re-render if text changed to avoid flickering
-                                if (preview.dataset.lastText !== text) {
-                                    preview.dataset.lastText = text;
-                                    const id = 'mermaid-ww-' + Math.random().toString(36).substr(2, 9);
-                                    // Set text so mermaid can parse it
-                                    preview.innerHTML = '<div class="mermaid" id="' + id + '">' + text.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</div>';
-                                    mermaid.run({ querySelector: '#' + id, suppressErrors: true })
-                                        .catch(e => {
-                                            // Show error if syntax is invalid
-                                            preview.innerHTML = '<div style="color: var(--vscode-errorForeground); font-size: 12px;">Syntax Error</div>';
-                                        });
+                            preview.style.top = top + 'px';
+                            preview.style.left = left + 'px';
+                            // Match width minus some padding buffer to fit the editor
+                            preview.style.width = Math.max(200, rect.width - 20) + 'px';
+                            
+                            // Removing the 'display: none' optimization as off-screen elements
+                            // cause mermaid.init to fetch 0 bounding client rects and render
+                            // as overlapping black blobs, which never recover when scrolled back in.
+                            preview.style.display = 'block';
+
+                            if (preview.dataset.lastText !== text) {
+                                preview.dataset.lastText = text;
+                                const id = 'mermaid-ww-' + Math.random().toString(36).substr(2, 9);
+                                
+                                let codeToRender = text;
+                                if (codeToRender.trim().toLowerCase().startsWith('mermaid')) {
+                                    codeToRender = codeToRender.replace(/^mermaid\s*\n?/, '');
+                                }
+
+                                const safeHtml = codeToRender
+                                    .replace(/&/g, '&amp;')
+                                    .replace(/</g, '&lt;')
+                                    .replace(/>/g, '&gt;')
+                                    .replace(/"/g, '&quot;')
+                                    .replace(/'/g, '&#039;');
+
+                                preview.innerHTML = '<div class="mermaid" id="' + id + '">' + safeHtml + '</div>';
+                                
+                                try {
+                                    mermaid.init(undefined, document.querySelectorAll('#' + id));
+                                } catch (e) {
+                                    preview.innerHTML = '<div style="color: var(--vscode-errorForeground); font-size: 12px; font-weight: bold;">Mermaid Syntax Error or Incomplete</div>';
                                 }
                             }
                         });
+
+                        // Cleanup orphaned overlays
+                        Array.from(overlayContainer.children).forEach(child => {
+                            if (!activeBlockIds.has(child.id.replace('overlay-', ''))) {
+                                child.remove();
+                            }
+                        });
+
+                    } else {
+                        vscode.postMessage({ type: 'error', text: 'Mermaid library failed to load globally (window.mermaid is undefined).' });
                     }
                 } catch (e) {
                     console.error('Mermaid exception: ', e);
                 }
+
             }, 300);
         }
         const fmEditor = document.getElementById('frontmatter-editor');
@@ -396,12 +510,20 @@ export class MarkdownEditorProvider implements vscode.CustomTextEditorProvider {
             theme: 'dark',
             autofocus: false,
             hideModeSwitch: true,
+            extendedAutolink: true,
             customHTMLRenderer: {
                 codeBlock(node, context) {
                     const { info, literal } = node;
                     if (info === 'mermaid') {
                         return [
-                            { type: 'openTag', tagName: 'div', classNames: ['mermaid-diagram'] },
+                            { 
+                                type: 'openTag', 
+                                tagName: 'div', 
+                                classNames: ['mermaid-diagram'],
+                                attributes: {
+                                    'data-raw': encodeURIComponent(literal)
+                                }
+                            },
                             { type: 'html', content: literal },
                             { type: 'closeTag', tagName: 'div' }
                         ];
